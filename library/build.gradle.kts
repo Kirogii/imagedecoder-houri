@@ -1,5 +1,15 @@
 import java.util.concurrent.TimeUnit
 
+val prebuiltArm64 = providers.gradleProperty("imagedecoder.prebuiltArm64").orNull
+val usePrebuiltArm64 = prebuiltArm64 != null
+if (usePrebuiltArm64) {
+    val library = file(prebuiltArm64!!)
+    val expected = file("src/main/jniLibs/arm64-v8a/libimagedecoder2.so")
+    require(library.canonicalFile == expected.canonicalFile && library.isFile && library.length() > 0) {
+        "Place the required ARM64 decoder at $expected before using imagedecoder.prebuiltArm64"
+    }
+}
+
 plugins {
     alias(libs.plugins.android.library)
     id("com.vanniktech.maven.publish") version "0.36.0"
@@ -24,7 +34,7 @@ android {
     defaultConfig {
         minSdk = 24
 
-        externalNativeBuild {
+        if (!usePrebuiltArm64) externalNativeBuild {
             cmake {
                 cppFlags("-O3 -flto")
                 targets("ep_imagedecoder")
@@ -63,7 +73,7 @@ android {
         }
     }
 
-    externalNativeBuild {
+    if (!usePrebuiltArm64) externalNativeBuild {
         cmake {
             path = file("src/main/cpp/CMakeLists.txt")
             version = "3.22.1"
@@ -75,7 +85,6 @@ android {
             isMinifyEnabled = false
         }
     }
-
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
