@@ -1,12 +1,45 @@
+import java.security.MessageDigest
 import java.util.concurrent.TimeUnit
 
-val prebuiltArm64 = providers.gradleProperty("imagedecoder.prebuiltArm64").orNull
+val hostIsWindows = System.getProperty("os.name").contains("Windows", ignoreCase = true)
+val decoderFromSource = providers.gradleProperty("questium.decoder.fromSource")
+    .map { it.toBooleanStrict() }.getOrElse(false)
+val explicitPrebuiltArm64 = providers.gradleProperty("imagedecoder.prebuiltArm64").orNull
+require(!decoderFromSource || explicitPrebuiltArm64 == null) {
+    "Choose questium.decoder.fromSource=true or imagedecoder.prebuiltArm64, not both"
+}
+val prebuiltArm64 = explicitPrebuiltArm64 ?: if (hostIsWindows && !decoderFromSource) {
+    rootProject.file("../../native/decoder/arm64-v8a/libimagedecoder2.so").absolutePath
+} else {
+    null
+}
 val usePrebuiltArm64 = prebuiltArm64 != null
+val prebuiltLibrary = prebuiltArm64?.let { file(it) }
 if (usePrebuiltArm64) {
-    val library = file(prebuiltArm64!!)
-    val expected = file("src/main/jniLibs/arm64-v8a/libimagedecoder2.so")
-    require(library.canonicalFile == expected.canonicalFile && library.isFile && library.length() > 0) {
-        "Place the required ARM64 decoder at $expected before using imagedecoder.prebuiltArm64"
+    val library = prebuiltLibrary!!
+    require(library.isFile && library.name == "libimagedecoder2.so" && library.parentFile.name == "arm64-v8a") {
+        "ARM64 decoder missing or misplaced: $library. Restore native/decoder or explicitly build from source."
+    }
+    val bytes = library.readBytes()
+    require(bytes.size >= 64 && bytes[0] == 0x7f.toByte() &&
+        bytes[1] == 'E'.code.toByte() && bytes[2] == 'L'.code.toByte() && bytes[3] == 'F'.code.toByte() &&
+        bytes[4] == 2.toByte() && bytes[5] == 1.toByte() &&
+        bytes[18] == 0xb7.toByte() && bytes[19] == 0.toByte()
+    ) {
+        "Decoder must be a 64-bit little-endian AArch64 ELF library: $library"
+    }
+    val sha256 = MessageDigest.getInstance("SHA-256").digest(bytes)
+        .joinToString("") { "%02x".format(it) }
+    require(sha256 == "ff5eb9760fbd9c349875768ff7c610fd691d1d55f63f005b8b5e9b6f212db632") {
+        "Decoder SHA-256 mismatch for $library: $sha256. Use the documented bundled artifact."
+    }
+    for (property in listOf("android.injected.build.abi", "questium.abis")) {
+        val requested = providers.gradleProperty(property).orNull
+            ?.split(',', ';')?.map { it.trim() }?.filter { it.isNotEmpty() }.orEmpty()
+        require(requested.all { it == "arm64-v8a" }) {
+            "Bundled decoder supports only arm64-v8a; $property requested $requested. " +
+                "Use -Pquestium.decoder.fromSource=true for other ABIs."
+        }
     }
 }
 
@@ -31,8 +64,17 @@ android {
     namespace = "ca.mpreg.imagedecoder"
     compileSdk = 37
 
+    (sourceSets as org.gradle.api.NamedDomainObjectContainer<com.android.build.gradle.api.AndroidSourceSet>).named("main") {
+        // Explicit inputs only; ignore legacy cached binaries in src/main/jniLibs.
+        jniLibs.setSrcDirs(if (usePrebuiltArm64) listOf(prebuiltLibrary!!.parentFile.parentFile) else emptyList<File>())
+    }
+
     defaultConfig {
         minSdk = 24
+
+        if (usePrebuiltArm64) ndk {
+            abiFilters += "arm64-v8a"
+        }
 
         if (!usePrebuiltArm64) externalNativeBuild {
             cmake {

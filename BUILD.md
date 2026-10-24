@@ -1,4 +1,38 @@
-# imagedecoder-houri — Native Build (WSL / Debian)
+# imagedecoder-houri — Bundled ARM64 decoder and native source builds
+
+## Windows consumer default
+
+When included by Questium, Windows builds package the durable consumer input
+`native/decoder/arm64-v8a/libimagedecoder2.so`. This path is resolved relative to the
+consumer repository, two directories above this included build. No WSL probe or CMake
+configuration runs in this mode. The decoder module filters its ABI to `arm64-v8a`;
+the consumer must also restrict APK outputs to ARM64. Explicit non-ARM64 requests through
+`android.injected.build.abi` or `questium.abis` fail with an actionable error.
+
+The library is checked for ELF64, little-endian encoding, AArch64 machine type and SHA-256:
+
+```text
+ff5eb9760fbd9c349875768ff7c610fd691d1d55f63f005b8b5e9b6f212db632
+```
+
+This is an imported legacy binary recovered from the existing working decoder. Its hash
+identifies the exact imported bytes; it does not attest the source commit, compiler,
+dependency versions or build flags that originally produced them. Consumer metadata lives
+in `native/decoder/manifest.json`; the consumer must preserve the binary's dependency
+notices and licenses with that bundle. The source recipes below describe rebuilding from
+the checked-out sources, not verified provenance for the imported binary.
+
+`-Pimagedecoder.prebuiltArm64=<path>` remains supported on every host. The path must end in
+`arm64-v8a/libimagedecoder2.so` and match the same checksum and ELF checks. Its parent JNI
+directory is packaged directly; no copies or generated build-cache outputs are required.
+Legacy `src/main/jniLibs` files are ignored unless explicitly selected by that property.
+
+Use `-Pquestium.decoder.fromSource=true` to opt into source builds on Windows. This cannot
+be combined with `imagedecoder.prebuiltArm64`. Linux defaults to the source build, and can
+also explicitly select the verified prebuilt. Source builds support the other Android ABIs
+and retain the WSL requirements below on Windows.
+
+## Native source build (WSL / Debian)
 
 This repo's `library/src/main/cpp/CMakeLists.txt` is **designed for Debian WSL** on Windows. There is **no MSYS2 / Git Bash fallback** — on `WIN32` the build `FATAL_ERROR`s if `wsl.exe` is missing. All `ExternalProject` steps (meson, autotools, cmake) run via `wsl`'s Linux tools to avoid `C:/` vs `/c/` vs `C:\` path bugs (notably Meson 1.12.0 `gio/meson.build:925` `is_parent_path` assert, and `CC=C:/...` tokenised as variable `C`).
 
